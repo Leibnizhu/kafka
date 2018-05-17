@@ -56,6 +56,9 @@ public class DefaultPartitioner implements Partitioner {
         int numPartitions = partitions.size();
         if (keyBytes == null) {
             int nextValue = nextValue(topic);
+            /**
+             * 那么没有键的消息不会被分配到还没有选举出主副本的分区
+             */
             List<PartitionInfo> availablePartitions = cluster.availablePartitionsForTopic(topic);
             if (availablePartitions.size() > 0) {
                 int part = Utils.toPositive(nextValue) % availablePartitions.size();

@@ -18,6 +18,7 @@ import org.apache.kafka.common.requests.RequestHeader;
 /**
  * A response from the server. Contains both the body of the response as well as the correlated request
  * metadata that was originally sent.
+ * 生命周期都在 NetworkClient中
  */
 public class ClientResponse {
 
@@ -28,7 +29,7 @@ public class ClientResponse {
     private final long latencyMs;
     private final boolean disconnected;
     private final RuntimeException versionMismatch;
-    private final AbstractResponse responseBody;
+    private final AbstractResponse responseBody;//响应体
 
     /**
      * @param requestHeader The header of the corresponding request

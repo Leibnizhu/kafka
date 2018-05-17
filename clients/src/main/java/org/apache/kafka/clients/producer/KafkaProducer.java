@@ -140,6 +140,10 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     private final int maxRequestSize;
     private final long totalMemorySize;
     private final Metadata metadata;
+    /**
+     * 生产者发迭的消息先在客户端缓存到记录收集器 RecordAccumulator中，(通过append()方法)
+     * 等到一定时机再由发送线 程Sender批量地写入Kafka集群。
+     */
     private final RecordAccumulator accumulator;
     private final Sender sender;
     private final Metrics metrics;
@@ -354,6 +358,10 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     /**
      * Asynchronously send a record to a topic. Equivalent to <code>send(record, null)</code>.
      * See {@link #send(ProducerRecord, Callback)} for details.
+     *
+     * 因为 send 方法返回的是一个Future。 基于Future，我们可以实现同步或异步的消息发送话义。
+     *  - 同步。调用send返回 Future时，立即调用 get，因为Future.get在没有返回结果时会一直阻塞。
+     *  - 异步。提供一个回调，调用send后可以继续发送消息而不用等待。当有结果返回时，会自动执行回调函数 。
      */
     @Override
     public Future<RecordMetadata> send(ProducerRecord<K, V> record) {
@@ -476,6 +484,9 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             // producer callback will make sure to call both 'callback' and interceptor callback
             Callback interceptCallback = this.interceptors == null ? callback : new InterceptorCallback<>(callback, this.interceptors, tp);
             RecordAccumulator.RecordAppendResult result = accumulator.append(tp, timestamp, serializedKey, serializedValue, interceptCallback, remainingWaitMs);
+            /*
+             * 上面append()方法的返回值表示RecordBatch是否满了,满了就开始发送数据
+             */
             if (result.batchIsFull || result.newBatchCreated) {
                 log.trace("Waking up the sender since topic {} partition {} is either full or getting a new batch", record.topic(), partition);
                 this.sender.wakeup();
@@ -748,8 +759,15 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      * computes partition for given record.
      * if the record has partition returns the value otherwise
      * calls configured partitioner class to compute the partition.
+     *
+     * 如果指定了消息的键，为消息选择分区的算法是:对键进行散列化后，再与分区的数量-取模运算得到分区编号 。
+     *  一般我们会提前创建主题，指定更多 的分区数，这样同 一个主题的所有消息就会分散在不同的节点上 。
      */
     private int partition(ProducerRecord<K, V> record, byte[] serializedKey, byte[] serializedValue, Cluster cluster) {
+        /**
+         * 先调用参数ProducerRecord的partition()方法，如果生产者已经设置了就直接用，
+         * 否则调用Partitioner的partition()方法，是个接口，默认实现是org.apache.kafka.clients.producer.internals.DefaultPartitioner 
+         */
         Integer partition = record.partition();
         return partition != null ?
                 partition :

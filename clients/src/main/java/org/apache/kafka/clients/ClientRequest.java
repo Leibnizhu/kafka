@@ -18,16 +18,17 @@ import org.apache.kafka.common.requests.RequestHeader;
 
 /**
  * A request being sent to the server. This holds both the network send as well as the client-level metadata.
+ * 生命周期都在 NetworkClient中
  */
 public final class ClientRequest {
 
     private final String destination;
-    private final AbstractRequest.Builder<?> requestBuilder;
+    private final AbstractRequest.Builder<?> requestBuilder;//构造器,包含各种请求信息
     private final int correlationId;
     private final String clientId;
     private final long createdTimeMs;
-    private final boolean expectResponse;
-    private final RequestCompletionHandler callback;
+    private final boolean expectResponse;//希望拿到响应
+    private final RequestCompletionHandler callback;//请求完成后回调
 
     /**
      * @param destination The brokerId to send the request to

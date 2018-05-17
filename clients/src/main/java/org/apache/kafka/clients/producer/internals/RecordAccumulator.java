@@ -168,10 +168,16 @@ public final class RecordAccumulator {
         appendsInProgress.incrementAndGet();
         try {
             // check if we have an in-progress batch
+            /*
+             * 每个分区都有一个双端队列用来缓存客户端的消息,队列每个元素是一个批记录
+             * getOrCreateDeque()从batches(一个同步Map)获取,没有则新建一个并返回,插入Map
+             */
             Deque<RecordBatch> dq = getOrCreateDeque(tp);
             synchronized (dq) {
                 if (closed)
                     throw new IllegalStateException("Cannot send after the producer is closed.");
+                //如果队列非空,且旧批记录未满可以放下新消息,则返回RecordAppendResult对象,否则,返回null
+                //返回null的话继续下面的步骤,非null直接返回
                 RecordAppendResult appendResult = tryAppend(timestamp, key, value, callback, dq);
                 if (appendResult != null)
                     return appendResult;
@@ -193,6 +199,7 @@ public final class RecordAccumulator {
                     return appendResult;
                 }
                 MemoryRecordsBuilder recordsBuilder = MemoryRecords.builder(buffer, compression, TimestampType.CREATE_TIME, this.batchSize);
+                //新建一个批记录,并追加到队列尾部
                 RecordBatch batch = new RecordBatch(tp, recordsBuilder, time.milliseconds());
                 FutureRecordMetadata future = Utils.notNull(batch.tryAppend(timestamp, key, value, callback, time.milliseconds()));
 
@@ -210,14 +217,21 @@ public final class RecordAccumulator {
      * resources (like compression streams buffers).
      */
     private RecordAppendResult tryAppend(long timestamp, byte[] key, byte[] value, Callback callback, Deque<RecordBatch> deque) {
+                /*
+                 * 尝试获取队列最后一个记录
+                 */
         RecordBatch last = deque.peekLast();
         if (last != null) {
+            //有旧的批记录,则追加消息
             FutureRecordMetadata future = last.tryAppend(timestamp, key, value, callback, time.milliseconds());
             if (future == null)
+                //旧的批记录放不下了,关闭队列最后一个批记录,然后这个方法返回null
                 last.close();
             else
+                //追加成功
                 return new RecordAppendResult(future, deque.size() > 1 || last.isFull(), false);
         }
+        //队列为空,没有批记录
         return null;
     }
 
@@ -362,6 +376,7 @@ public final class RecordAccumulator {
     }
 
     /**
+     * 从记录收集器获取按节点整理好的每个分区的批记录
      * Drain all the data for the given nodes and collate them into a list of batches that will fit within the specified
      * size on a per-node basis. This method attempts to avoid choosing the same topic-node over and over.
      * 
@@ -381,9 +396,10 @@ public final class RecordAccumulator {
         Map<Integer, List<RecordBatch>> batches = new HashMap<>();
         for (Node node : nodes) {
             int size = 0;
-            List<PartitionInfo> parts = cluster.partitionsForNode(node.id());
+            List<PartitionInfo> parts = cluster.partitionsForNode(node.id());//节点的分区信息
             List<RecordBatch> ready = new ArrayList<>();
             /* to make starvation less likely this loop doesn't start at 0 */
+            // 从drainIndex模分区数量开始,drainIndex递增到越过分区数到达start为止,遍历所有分区
             int start = drainIndex = drainIndex % parts.size();
             do {
                 PartitionInfo part = parts.get(drainIndex);
@@ -393,6 +409,7 @@ public final class RecordAccumulator {
                     Deque<RecordBatch> deque = getDeque(new TopicPartition(part.topic(), part.partition()));
                     if (deque != null) {
                         synchronized (deque) {
+                            //获取分区的批记录队列中的第一个批记录
                             RecordBatch first = deque.peekFirst();
                             if (first != null) {
                                 boolean backoff = first.attempts > 0 && first.lastAttemptMs + retryBackoffMs > now;
@@ -407,7 +424,7 @@ public final class RecordAccumulator {
                                         RecordBatch batch = deque.pollFirst();
                                         batch.close();
                                         size += batch.sizeInBytes();
-                                        ready.add(batch);
+                                        ready.add(batch); //加入到批记录List<RecordBatch>
                                         batch.drainedMs = now;
                                     }
                                 }
@@ -417,6 +434,7 @@ public final class RecordAccumulator {
                 }
                 this.drainIndex = (this.drainIndex + 1) % parts.size();
             } while (start != drainIndex);
+            // 节点ID -> 同一个主副本节点的所有批记录List<RecordBatch>
             batches.put(node.id(), ready);
         }
         return batches;

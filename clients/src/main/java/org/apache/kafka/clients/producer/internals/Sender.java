@@ -164,6 +164,7 @@ public class Sender implements Runnable {
     void run(long now) {
         Cluster cluster = metadata.fetch();
         // get the list of partitions with data ready to send
+        //获取准备发送的所有分区
         RecordAccumulator.ReadyCheckResult result = this.accumulator.ready(cluster, now);
 
         // if there are any partitions whose leaders are not known yet, force metadata update
@@ -177,10 +178,12 @@ public class Sender implements Runnable {
         }
 
         // remove any nodes we aren't ready to send to
+        //建立到主副节点的网络连接,
         Iterator<Node> iter = result.readyNodes.iterator();
         long notReadyTimeout = Long.MAX_VALUE;
         while (iter.hasNext()) {
             Node node = iter.next();
+            //移除还没有准备好的节点
             if (!this.client.ready(node, now)) {
                 iter.remove();
                 notReadyTimeout = Math.min(notReadyTimeout, this.client.connectionDelay(node, now));
@@ -188,6 +191,7 @@ public class Sender implements Runnable {
         }
 
         // create produce requests
+        //读取[记录收集器],返回的每个主副节点对应批记录列表,.每个批记录对应一个分区
         Map<Integer, List<RecordBatch>> batches = this.accumulator.drain(cluster,
                                                                          result.readyNodes,
                                                                          this.maxRequestSize,
@@ -216,12 +220,14 @@ public class Sender implements Runnable {
             log.trace("Nodes with data ready to send: {}", result.readyNodes);
             pollTimeout = 0;
         }
+        //以节点为级别,将请求放入队列等待发送
         sendProduceRequests(batches, now);
 
         // if some partitions are already ready to be sent, the select time would be 0;
         // otherwise if some partition already has some data accumulated but not ready yet,
         // the select time will be the time difference between now and its linger expiry time;
         // otherwise the select time will be the time difference between now and the metadata expiry time;
+        // 真正产生网络读写请求,前面都是准备
         this.client.poll(pollTimeout, now);
     }
 
@@ -351,8 +357,10 @@ public class Sender implements Runnable {
             recordsByPartition.put(tp, batch);
         }
 
+        //构造请求builder,包含了所有话题分区
         ProduceRequest.Builder requestBuilder =
                 new ProduceRequest.Builder(acks, timeout, produceRecordsByPartition);
+        //客户端请求完成后,会调用这个回调函数,用java没办法写得比较繁琐
         RequestCompletionHandler callback = new RequestCompletionHandler() {
             public void onComplete(ClientResponse response) {
                 handleProduceResponse(response, recordsByPartition, time.milliseconds());
@@ -360,7 +368,9 @@ public class Sender implements Runnable {
         };
 
         String nodeId = Integer.toString(destination);
+        //封装客户端请求
         ClientRequest clientRequest = client.newClientRequest(nodeId, requestBuilder, now, acks != 0, callback);
+        //调用NetworkClient.doSend()发送
         client.send(clientRequest, now);
         log.trace("Sent produce request to {}: {}", nodeId, requestBuilder);
     }
