@@ -24,7 +24,7 @@ public class ByteBufferSend implements Send {
 
     private final String destination;
     private final int size;
-    protected final ByteBuffer[] buffers;
+    protected final ByteBuffer[] buffers;//用字节缓冲区来缓存通道中的数据,表示要发送出去的数据，如果缓冲区的数据都发送完，说明Send写入完成
     private int remaining;
     private boolean pending = false;
 
@@ -53,6 +53,7 @@ public class ByteBufferSend implements Send {
 
     @Override
     public long writeTo(GatheringByteChannel channel) throws IOException {
+        //最终是调用SocketChannel的write()方法
         long written = channel.write(buffers);
         if (written < 0)
             throw new EOFException("Wrote negative bytes to channel. This shouldn't happen.");

@@ -30,11 +30,11 @@ import org.apache.kafka.common.utils.Utils;
 
 public class KafkaChannel {
     private final String id;
-    private final TransportLayer transportLayer;
+    private final TransportLayer transportLayer;//传输层,封装了SocketChannel,很多实际要操作SocketChannel时,都交给传输层处理
     private final Authenticator authenticator;
     private final int maxReceiveSize;
-    private NetworkReceive receive;
-    private Send send;
+    private NetworkReceive receive;//接收的响应
+    private Send send;//发送的请求
     // Track connection and mute state of channels to enable outstanding requests on channels to be
     // processed after the channel is disconnected.
     private boolean disconnected;
@@ -134,19 +134,22 @@ public class KafkaChannel {
     }
 
     public void setSend(Send send) {
+        //如果Kafka通道上还有未发送成功的Send请求，则后面的新来的请求就不能发送
         if (this.send != null)
             throw new IllegalStateException("Attempt to begin a send operation with prior send operation still in progress.");
-        this.send = send;
-        this.transportLayer.addInterestOps(SelectionKey.OP_WRITE);
+        this.send = send; //没有未发送成功的请求,则将当前请求放入当前对象的send成员属性
+        this.transportLayer.addInterestOps(SelectionKey.OP_WRITE);//向Selector加入写事件
     }
 
+    //Selector轮询时，检测到读事件时调用此方法
     public NetworkReceive read() throws IOException {
         NetworkReceive result = null;
 
+        //如果网络接收对象不存在，则新建一个
         if (receive == null) {
             receive = new NetworkReceive(maxReceiveSize, id);
         }
-
+        //
         receive(receive);
         if (receive.complete()) {
             receive.payload().rewind();
@@ -156,10 +159,12 @@ public class KafkaChannel {
         return result;
     }
 
+    //Selector轮询的时候,检测到写时间就会调用这个方法
     public Send write() throws IOException {
         Send result = null;
         if (send != null && send(send)) {
             result = send;
+            //请求已经全部发送完成 ， 重置send对象为空 ，下一次新的请求才可以继续正常进行
             send = null;
         }
         return result;
@@ -172,9 +177,10 @@ public class KafkaChannel {
     private boolean send(Send send) throws IOException {
         send.writeTo(transportLayer);
         if (send.completed())
+            //Send发送成功后，就要取消写事件
             transportLayer.removeInterestOps(SelectionKey.OP_WRITE);
 
-        return send.completed();
+        return send.completed();//Send没有写完成，会监听写事件
     }
 
 }

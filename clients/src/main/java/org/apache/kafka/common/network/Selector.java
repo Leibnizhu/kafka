@@ -153,6 +153,7 @@ public class Selector implements Selectable {
      * <p>
      * Note that this call only initiates the connection, which will be completed on a future {@link #poll(long)}
      * call. Check {@link #connected()} to see which (if any) connections have completed after a given poll call.
+     * 创建客户端到指定远程服务器的网络连接
      * @param id The id for the new connection
      * @param address The address to connect to
      * @param sendBufferSize The send buffer for the new connection
@@ -167,6 +168,7 @@ public class Selector implements Selectable {
 
         SocketChannel socketChannel = SocketChannel.open();
         socketChannel.configureBlocking(false);
+        //客户祸，返回的是 Socket
         Socket socket = socketChannel.socket();
         socket.setKeepAlive(true);
         if (sendBufferSize != Selectable.USE_DEFAULT_BUFFER_SIZE)
@@ -176,6 +178,7 @@ public class Selector implements Selectable {
         socket.setTcpNoDelay(true);
         boolean connected;
         try {
+            //非阻塞连接服务梢，只是发起连接请求
             connected = socketChannel.connect(address);
         } catch (UnresolvedAddressException e) {
             socketChannel.close();
@@ -184,9 +187,14 @@ public class Selector implements Selectable {
             socketChannel.close();
             throw e;
         }
+        //注册连接事件,获取SelectionKey
         SelectionKey key = socketChannel.register(nioSelector, SelectionKey.OP_CONNECT);
+        //创建了更抽象的 Kafka通道,Kafka通道是对原始的SocketChannel的一层包装
+        //Kafka通道有多种实现，比如纯文材莫式(PlaintextChannelBuilder)、 sasl(SaslChannelBuilder)、 ssl加密(SslChannelBuilder)模式
         KafkaChannel channel = channelBuilder.buildChannel(id, key, maxReceiveSize);
+        //将选择键和Kafka通道关联起来,选择器在轮询时，可以通过 key.attachment()获取绑定到选择键上的Kafka通道
         key.attach(channel);
+        //记录节点编号和客户将请求中的目标节点对应关系
         this.channels.put(id, channel);
 
         if (connected) {
@@ -278,6 +286,8 @@ public class Selector implements Selectable {
      * by SocketServer to the request queue may be processed by different request handler threads, requests on each
      * channel must be processed one-at-a-time to guarantee ordering.
      *
+     * 根据选择键读写 ， 分别调用Kafka通道的read()和Write()
+     *
      * @param timeout The amount of time to wait, in milliseconds, which must be non-negative
      * @throws IllegalArgumentException If `timeout` is negative
      * @throws IllegalStateException If a send is given for which we have no existing connection or for which there is
@@ -294,7 +304,9 @@ public class Selector implements Selectable {
             timeout = 0;
 
         /* check ready keys */
+        //记录起始结束纳秒数,用来计算耗时并记录
         long startSelect = time.nanoseconds();
+        //立即轮询，或者阻塞直到超时(timeout)
         int readyKeys = select(timeout);
         long endSelect = time.nanoseconds();
         this.sensors.selectTime.record(endSelect - startSelect, time.milliseconds());
@@ -304,6 +316,7 @@ public class Selector implements Selectable {
             pollSelectionKeys(immediatelyConnectedKeys, true, endSelect);
         }
 
+        //接收到的NetworkReceive加入到completedReceives
         addToCompletedReceives();
 
         long endIo = time.nanoseconds();
@@ -321,6 +334,7 @@ public class Selector implements Selectable {
         while (iterator.hasNext()) {
             SelectionKey key = iterator.next();
             iterator.remove();
+            //获得绑定到SelectKey的Kafka通道
             KafkaChannel channel = channel(key);
 
             // register all per-connection metrics at once
@@ -331,6 +345,7 @@ public class Selector implements Selectable {
             try {
 
                 /* complete any connections that have finished their handshake (either normally or immediately) */
+                //需要马上连接的
                 if (isImmediatelyConnected || key.isConnectable()) {
                     if (channel.finishConnect()) {
                         this.connected.add(channel.id());
@@ -352,7 +367,9 @@ public class Selector implements Selectable {
                 /* if channel is ready read from any connections that have readable data */
                 if (channel.ready() && key.isReadable() && !hasStagedReceive(channel)) {
                     NetworkReceive networkReceive;
+                    //通过while循环保证读取所有响应
                     while ((networkReceive = channel.read()) != null)
+                        //加入到已完成的列表中
                         addToStagedReceives(channel, networkReceive);
                 }
 
@@ -360,6 +377,7 @@ public class Selector implements Selectable {
                 if (channel.ready() && key.isWritable()) {
                     Send send = channel.write();
                     if (send != null) {
+                        //请求发送完成后， 加入到completedSends集合 中
                         this.completedSends.add(send);
                         this.sensors.recordBytesSent(channel.id(), send.size());
                     }

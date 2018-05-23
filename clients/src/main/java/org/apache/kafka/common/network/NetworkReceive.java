@@ -27,9 +27,10 @@ public class NetworkReceive implements Receive {
     public final static int UNLIMITED = -1;
 
     private final String source;
-    private final ByteBuffer size;
+    private final ByteBuffer size;//数据的长度
     private final int maxSize;
-    private ByteBuffer buffer;
+    private ByteBuffer buffer;//数据的内容
+    //size缓冲区和buffer缓冲区都写满了，说明NetworkReceive读取完成
 
 
     public NetworkReceive(String source, ByteBuffer buffer) {
@@ -94,6 +95,7 @@ public class NetworkReceive implements Receive {
             }
         }
         if (buffer != null) {
+            //最终是调用SocketChannel的read()方法
             int bytesRead = channel.read(buffer);
             if (bytesRead < 0)
                 throw new EOFException();

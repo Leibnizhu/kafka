@@ -35,8 +35,10 @@ public class PlaintextChannelBuilder implements ChannelBuilder {
         }
     }
 
+    //选择器在连接服务器时构建Kafka通道
     public KafkaChannel buildChannel(String id, SelectionKey key, int maxReceiveSize) throws KafkaException {
         try {
+            //PlaintextTransportLayer里面封装了SocketChannel
             PlaintextTransportLayer transportLayer = new PlaintextTransportLayer(key);
             Authenticator authenticator = new DefaultAuthenticator();
             authenticator.configure(transportLayer, this.principalBuilder, this.configs);
