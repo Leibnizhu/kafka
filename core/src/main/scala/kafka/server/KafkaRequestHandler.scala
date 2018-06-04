@@ -47,11 +47,11 @@ class KafkaRequestHandler(id: Int,
           // time_window is independent of the number of threads, each recorded idle
           // time should be discounted by # threads.
           val startSelectTime = time.nanoseconds
-          req = requestChannel.receiveRequest(300)
+          req = requestChannel.receiveRequest(300)//获取客户请求
           val idleTime = time.nanoseconds - startSelectTime
           aggregateIdleMeter.mark(idleTime / totalHandlerThreads)
         }
-
+        //循环处理直到接收到关闭命令,即请求为AllDone
         if(req eq RequestChannel.AllDone) {
           debug("Kafka request handler %d on broker %d received shut down command".format(
             id, brokerId))
@@ -59,7 +59,7 @@ class KafkaRequestHandler(id: Int,
         }
         req.requestDequeueTimeMs = time.milliseconds
         trace("Kafka request handler %d on broker %d handling request %s".format(id, brokerId, req))
-        apis.handle(req)
+        apis.handle(req)//交给全局的KafkaApis处理
       } catch {
         case e: Throwable => error("Exception when handling request", e)
       }
@@ -82,6 +82,7 @@ class KafkaRequestHandlerPool(val brokerId: Int,
   val threads = new Array[Thread](numThreads)
   val runnables = new Array[KafkaRequestHandler](numThreads)
   for(i <- 0 until numThreads) {
+    //RequestChannel会传递给请求处理线程连接池的每个请求处理线程
     runnables(i) = new KafkaRequestHandler(i, brokerId, aggregateIdleMeter, numThreads, requestChannel, apis, time)
     threads(i) = Utils.daemonThread("kafka-request-handler-" + i, runnables(i))
     threads(i).start()

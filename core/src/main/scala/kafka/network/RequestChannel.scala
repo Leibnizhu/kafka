@@ -181,10 +181,12 @@ object RequestChannel extends Logging {
 
 class RequestChannel(val numProcessors: Int, val queueSize: Int) extends KafkaMetricsGroup {
   private var responseListeners: List[(Int) => Unit] = Nil
+  //全局的请求队列
   private val requestQueue = new ArrayBlockingQueue[RequestChannel.Request](queueSize)
+  //每个处理器对应的响应队列
   private val responseQueues = new Array[BlockingQueue[RequestChannel.Response]](numProcessors)
   for(i <- 0 until numProcessors)
-    responseQueues(i) = new LinkedBlockingQueue[RequestChannel.Response]()
+    responseQueues(i) = new LinkedBlockingQueue[RequestChannel.Response]()//初始化响应队列
 
   newGauge(
     "RequestQueueSize",
@@ -206,12 +208,19 @@ class RequestChannel(val numProcessors: Int, val queueSize: Int) extends KafkaMe
     )
   }
 
+  /*
+   * 以下几个方法实际执行顺序 :
+   * sendRequest()->ReceiveRequest()->sendResponse()->ReceiveResponse()
+   */
+
   /** Send a request to be handled, potentially blocking until there is room in the queue for the request */
+  //将请求放入请求队列,请求队列满时，会阻塞，直到有处理器取走一个请求
   def sendRequest(request: RequestChannel.Request) {
     requestQueue.put(request)
   }
 
   /** Send a response back to the socket server to be sent over the network */
+  //通过网路发送响应给SocketServer
   def sendResponse(response: RequestChannel.Response) {
     responseQueues(response.processor).put(response)
     for(onResponse <- responseListeners)
@@ -233,6 +242,7 @@ class RequestChannel(val numProcessors: Int, val queueSize: Int) extends KafkaMe
   }
 
   /** Get the next request or block until specified time has elapsed */
+  //请求队列中取出请求，队列为空会阻塞，直到超时,或者有处理器加入新的请求
   def receiveRequest(timeout: Long): RequestChannel.Request =
     requestQueue.poll(timeout, TimeUnit.MILLISECONDS)
 
