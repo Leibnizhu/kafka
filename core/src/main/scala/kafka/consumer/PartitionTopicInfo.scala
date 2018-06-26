@@ -22,6 +22,9 @@ import java.util.concurrent.atomic._
 import kafka.message._
 import kafka.utils.Logging
 
+/**
+  * 分区信息对象,保存类拉取偏移量,消费偏移量, 队列等重要信息
+  */
 class PartitionTopicInfo(val topic: String,
                          val partitionId: Int,
                          private val chunkQueue: BlockingQueue[FetchedDataChunk],
@@ -57,7 +60,7 @@ class PartitionTopicInfo(val topic: String,
     if(size > 0) {
       val next = messages.shallowIterator.toSeq.last.nextOffset
       trace("Updating fetch offset = " + fetchedOffset.get + " to " + next)
-      chunkQueue.put(new FetchedDataChunk(messages, this, fetchedOffset.get))
+      chunkQueue.put(new FetchedDataChunk(messages, this, fetchedOffset.get))//消息集封装成FetchedDataChunk数据块,放入消息队列
       fetchedOffset.set(next)
       debug("updated fetch offset of (%s) to %d".format(this, next))
       consumerTopicStats.getConsumerTopicStats(topic).byteRate.mark(size)

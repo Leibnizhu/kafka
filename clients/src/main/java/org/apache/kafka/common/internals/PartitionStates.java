@@ -50,6 +50,7 @@ public class PartitionStates<S> {
             map.put(topicPartition, state);
     }
 
+    //先remove再put,而不是直接put, 是为了保证在尾部
     public void updateAndMoveToEnd(TopicPartition topicPartition, S state) {
         map.remove(topicPartition);
         map.put(topicPartition, state);

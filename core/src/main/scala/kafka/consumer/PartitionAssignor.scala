@@ -41,19 +41,22 @@ object PartitionAssignor {
   }
 }
 
+// 再平衡操作时构造当前消费者的分区分配上下文信息
 class AssignmentContext(group: String, val consumerId: String, excludeInternalTopics: Boolean, zkUtils: ZkUtils) {
+  //主题 -> List[ConsumerThreadId]
   val myTopicThreadIds: collection.Map[String, collection.Set[ConsumerThreadId]] = {
     val myTopicCount = TopicCount.constructTopicCount(group, consumerId, zkUtils, excludeInternalTopics)
     myTopicCount.getConsumerThreadIdsPerTopic
   }
-
+  //主题 ->List[ConsumerThreadId]
   val consumersForTopic: collection.Map[String, List[ConsumerThreadId]] =
     zkUtils.getConsumersPerTopic(group, excludeInternalTopics)
 
   // Some assignment strategies require knowledge of all topics consumed by any member of the group
+  //主题->List[partitionId]
   val partitionsForTopic: collection.Map[String, Seq[Int]] =
     zkUtils.getPartitionsForTopics(consumersForTopic.keySet.toSeq)
-
+  //List[consumerId]
   val consumers: Seq[String] = zkUtils.getConsumersInGroup(group).sorted
 }
 
@@ -80,6 +83,7 @@ class RoundRobinAssignor() extends PartitionAssignor with Logging {
       val threadAssignor = CoreUtils.circularIterator(allThreadIds)
 
       info("Starting round-robin assignment with consumers " + ctx.consumers)
+      //获取所有话题的所有分区,按hash进行排序
       val allTopicPartitions = ctx.partitionsForTopic.flatMap { case (topic, partitions) =>
         info("Consumer %s rebalancing the following partitions for topic %s: %s"
           .format(ctx.consumerId, topic, partitions))
@@ -104,7 +108,7 @@ class RoundRobinAssignor() extends PartitionAssignor with Logging {
 
     // assign Map.empty for the consumers which are not associated with topic partitions
     ctx.consumers.foreach(consumerId => partitionAssignment.getAndMaybePut(consumerId))
-    partitionAssignment
+    partitionAssignment //结构: 消费者ID -> (分区->消费者线程ID)
   }
 }
 
@@ -119,20 +123,21 @@ class RoundRobinAssignor() extends PartitionAssignor with Logging {
  */
 class RangeAssignor() extends PartitionAssignor with Logging {
 
+  //将分区数除以线程数，表示每个消费者线程平均可以分到几个分区。 如果除不尽，剩余的会依次分给前面几个消费者线程
   def assign(ctx: AssignmentContext) = {
     val valueFactory = (_: String) => new mutable.HashMap[TopicAndPartition, ConsumerThreadId]
     val partitionAssignment =
       new Pool[String, mutable.Map[TopicAndPartition, ConsumerThreadId]](Some(valueFactory))
-    for (topic <- ctx.myTopicThreadIds.keySet) {
-      val curConsumers = ctx.consumersForTopic(topic)
+    for (topic <- ctx.myTopicThreadIds.keySet) { //所有主题
+      val curConsumers = ctx.consumersForTopic(topic) //消费者线程ID
       val curPartitions: Seq[Int] = ctx.partitionsForTopic(topic)
 
-      val nPartsPerConsumer = curPartitions.size / curConsumers.size
-      val nConsumersWithExtraPart = curPartitions.size % curConsumers.size
+      val nPartsPerConsumer = curPartitions.size / curConsumers.size //每个线程的基础分区数
+      val nConsumersWithExtraPart = curPartitions.size % curConsumers.size //多余除不尽的分区数量,前nConsumersWithExtraPart个线程要分担
 
       info("Consumer " + ctx.consumerId + " rebalancing the following partitions: " + curPartitions +
         " for topic " + topic + " with consumers: " + curConsumers)
-
+      //为每个消费者线程分配分区
       for (consumerThreadId <- curConsumers) {
         val myConsumerPosition = curConsumers.indexOf(consumerThreadId)
         assert(myConsumerPosition >= 0)

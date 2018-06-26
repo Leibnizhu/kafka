@@ -27,6 +27,11 @@ import com.yammer.metrics.core.Gauge
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.utils.Utils
 
+/**
+  * 两种实现:
+  * 1. ConsumerFetcherManager 消费者拉取线程管理器
+  * 2. ReplicaFetcherManager 备份副本拉取线程管理器
+  */
 abstract class AbstractFetcherManager(protected val name: String, clientId: String, numFetchers: Int = 1)
   extends Logging with KafkaMetricsGroup {
   // map of (source broker_id, fetcher_id per source broker) => fetcher
@@ -64,27 +69,32 @@ abstract class AbstractFetcherManager(protected val name: String, clientId: Stri
   Map("clientId" -> clientId)
   )
 
+  //拉去线程总数numFetchers是new的时候指定的
   private def getFetcherId(topic: String, partitionId: Int) : Int = {
     Utils.abs(31 * topic.hashCode() + partitionId) % numFetchers
   }
 
   // to be defined in subclass to create a specific fetcher
+  //子类去实现, sourceBroker 为拉取线程需要连接的目标节点
   def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): AbstractFetcherThread
 
   def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, BrokerAndInitialOffset]) {
     mapLock synchronized {
+      //分组后同一组所有分区共用一个拉取线程,分区依据是 BrokerAndFetcherId(主副本节点, (主题hash+分区ID)mod 线程数)
+      //由于最后是跟服务端通信的,所以分组依据包含节点,但即不同的主副本不一定有不同的拉取线程,取决于线程数
       val partitionsPerFetcher = partitionAndOffsets.groupBy { case(topicPartition, brokerAndInitialOffset) =>
         BrokerAndFetcherId(brokerAndInitialOffset.broker, getFetcherId(topicPartition.topic, topicPartition.partition))}
+      //根据分组创建拉取线程
       for ((brokerAndFetcherId, partitionAndOffsets) <- partitionsPerFetcher) {
         var fetcherThread: AbstractFetcherThread = null
         fetcherThreadMap.get(brokerAndFetcherId) match {
           case Some(f) => fetcherThread = f
-          case None =>
-            fetcherThread = createFetcherThread(brokerAndFetcherId.fetcherId, brokerAndFetcherId.broker)
+          case None => //如果拉取线程不存在，就会创建拉取线程，再将分区添加到拉取线程中
+            fetcherThread = createFetcherThread(brokerAndFetcherId.fetcherId, brokerAndFetcherId.broker) //创建线程
             fetcherThreadMap.put(brokerAndFetcherId, fetcherThread)
             fetcherThread.start
         }
-
+        //将分区添加到线程中, 话题分区->偏移量
         fetcherThreadMap(brokerAndFetcherId).addPartitions(partitionAndOffsets.map { case (tp, brokerAndInitOffset) =>
           tp -> brokerAndInitOffset.initOffset
         })
@@ -107,7 +117,7 @@ abstract class AbstractFetcherManager(protected val name: String, clientId: Stri
     mapLock synchronized {
       val keysToBeRemoved = new mutable.HashSet[BrokerAndFetcherId]
       for ((key, fetcher) <- fetcherThreadMap) {
-        if (fetcher.partitionCount <= 0) {
+        if (fetcher.partitionCount <= 0) { //如果拉取线程没有分区,则删除之
           fetcher.shutdown()
           keysToBeRemoved += key
         }

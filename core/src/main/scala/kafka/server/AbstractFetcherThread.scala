@@ -49,10 +49,10 @@ abstract class AbstractFetcherThread(name: String,
                                      isInterruptible: Boolean = true)
   extends ShutdownableThread(name, isInterruptible) {
 
-  type REQ <: FetchRequest
-  type PD <: PartitionData
+  type REQ <: FetchRequest //拉取请求,包含分区偏移量
+  type PD <: PartitionData //拉取结果,白喊拉取到的信息
 
-  private val partitionStates = new PartitionStates[PartitionFetchState]
+  private val partitionStates = new PartitionStates[PartitionFetchState] //核心是一个LinkedHashMap,存储每个分区的拉取状态
   private val partitionMapLock = new ReentrantLock
   private val partitionMapCond = partitionMapLock.newCondition()
 
@@ -69,10 +69,13 @@ abstract class AbstractFetcherThread(name: String,
   def handleOffsetOutOfRange(topicPartition: TopicPartition): Long
 
   // deal with partitions with errors, potentially due to leadership changes
+  //处理拉取结果
   def handlePartitionsWithErrors(partitions: Iterable[TopicPartition])
 
+  //构建拉取请求
   protected def buildFetchRequest(partitionMap: Seq[(TopicPartition, PartitionFetchState)]): REQ
 
+  //拉取消息
   protected def fetch(fetchRequest: REQ): Seq[(TopicPartition, PD)]
 
   override def shutdown(){
@@ -87,17 +90,19 @@ abstract class AbstractFetcherThread(name: String,
     fetcherLagStats.unregister()
   }
 
+  //建立拉取请求,开始工作,调用一次表示一次拉取
+  //会被循环调用,直到关闭,拉取的时候偏移量变化,可以不断拉取到最新消息
   override def doWork() {
 
     val fetchRequest = inLock(partitionMapLock) {
       val fetchRequest = buildFetchRequest(partitionStates.partitionStates.asScala.map { state =>
         state.topicPartition -> state.value
       })
-      if (fetchRequest.isEmpty) {
+      if (fetchRequest.isEmpty) { //没有有效分区,拉取请求没有被创建成功,继续等待
         trace("There are no active partitions. Back off for %d ms before sending a fetch request".format(fetchBackOffMs))
         partitionMapCond.await(fetchBackOffMs, TimeUnit.MILLISECONDS)
       }
-      fetchRequest
+      fetchRequest //构建出请求之后返回
     }
     if (!fetchRequest.isEmpty)
       processFetchRequest(fetchRequest)
@@ -106,16 +111,17 @@ abstract class AbstractFetcherThread(name: String,
   private def processFetchRequest(fetchRequest: REQ) {
     val partitionsWithError = mutable.Set[TopicPartition]()
 
+    //处理其他拉取错误
     def updatePartitionsWithError(partition: TopicPartition): Unit = {
-      partitionsWithError += partition
+      partitionsWithError += partition //加入错误分区列表
       partitionStates.moveToEnd(partition)
     }
-
+    //发送拉去请求,返回响应结果
     var responseData: Seq[(TopicPartition, PD)] = Seq.empty
 
     try {
       trace("Issuing to broker %d of fetch request %s".format(sourceBroker.id, fetchRequest))
-      responseData = fetch(fetchRequest)
+      responseData = fetch(fetchRequest) //根据拉取请求向目标节点拉取消息,并返回响应结果
     } catch {
       case t: Throwable =>
         if (isRunning.get) {
@@ -136,25 +142,29 @@ abstract class AbstractFetcherThread(name: String,
       inLock(partitionMapLock) {
 
         responseData.foreach { case (topicPartition, partitionData) =>
-          val topic = topicPartition.topic
+       val topic = topicPartition.topic
           val partitionId = topicPartition.partition
           Option(partitionStates.stateValue(topicPartition)).foreach(currentPartitionFetchState =>
             // we append to the log if the current offset is defined and it is the same as the offset requested during fetch
+            //拉取请求的偏移量和收到的偏移量相同
             if (fetchRequest.offset(topicPartition) == currentPartitionFetchState.offset) {
               Errors.forCode(partitionData.errorCode) match {
                 case Errors.NONE =>
-                  try {
+                  try {//没有错误
                     val records = partitionData.toRecords
+                    //最后一条消息的偏移量+1(LogEntry.nextOffset)为下次要拉取的初始偏移量
                     val newOffset = records.shallowEntries.asScala.lastOption.map(_.nextOffset).getOrElse(
                       currentPartitionFetchState.offset)
 
                     fetcherLagStats.getAndMaybePut(topic, partitionId).lag = Math.max(0L, partitionData.highWatermark - newOffset)
                     // Once we hand off the partition data to the subclass, we can't mess with it any more in this thread
+                    //子类实现的方法,具体的处理逻辑处理拉取到的分区结果数据
                     processPartitionData(topicPartition, currentPartitionFetchState.offset, partitionData)
 
                     val validBytes = records.validBytes
                     if (validBytes > 0) {
                       // Update partitionStates only if there is no exception during processPartitionData
+                      //更新partitionStates中分区的拉取状态为本次拉取请求的最后一个偏移量
                       partitionStates.updateAndMoveToEnd(topicPartition, new PartitionFetchState(newOffset))
                       fetcherStats.byteRate.mark(validBytes)
                     }
@@ -170,9 +180,9 @@ abstract class AbstractFetcherThread(name: String,
                       throw new KafkaException("error processing data for partition [%s,%d] offset %d"
                         .format(topic, partitionId, currentPartitionFetchState.offset), e)
                   }
-                case Errors.OFFSET_OUT_OF_RANGE =>
+                case Errors.OFFSET_OUT_OF_RANGE => //拉取请求的拉取偏移量超过服务端分区的范围
                   try {
-                    val newOffset = handleOffsetOutOfRange(topicPartition)
+                    val newOffset = handleOffsetOutOfRange(topicPartition) //调用抽象方法,子类实现
                     partitionStates.updateAndMoveToEnd(topicPartition, new PartitionFetchState(newOffset))
                     error("Current offset %d for partition [%s,%d] out of range; reset offset to %d"
                       .format(currentPartitionFetchState.offset, topic, partitionId, newOffset))
@@ -185,7 +195,7 @@ abstract class AbstractFetcherThread(name: String,
                   if (isRunning.get) {
                     error("Error for partition [%s,%d] to broker %d:%s".format(topic, partitionId, sourceBroker.id,
                       partitionData.exception.get))
-                    updatePartitionsWithError(topicPartition)
+                    updatePartitionsWithError(topicPartition) //处理其他错误
                   }
               }
             })
@@ -199,6 +209,7 @@ abstract class AbstractFetcherThread(name: String,
     }
   }
 
+  //将分区(每次找到的那部分分区)添加到线程中
   def addPartitions(partitionAndOffsets: Map[TopicPartition, Long]) {
     partitionMapLock.lockInterruptibly()
     try {
@@ -215,7 +226,7 @@ abstract class AbstractFetcherThread(name: String,
         state.topicPartition -> state.value
       }.toMap
       partitionStates.set((existingPartitionToState ++ newPartitionToState).asJava)
-      partitionMapCond.signalAll()
+      partitionMapCond.signalAll()//有数据时,唤醒阻塞在该condition上的线程
     } finally partitionMapLock.unlock()
   }
 

@@ -32,6 +32,7 @@ class ReplicaFetcherManager(brokerConfig: KafkaConfig, replicaMgr: ReplicaManage
       case Some(p) =>
         "%s:ReplicaFetcherThread-%d-%d".format(p, fetcherId, sourceBroker.id)
     }
+    //备份副本的偏移量并没有保存在ZK中, 而是保存在备份副本的本地内存中
     new ReplicaFetcherThread(threadName, fetcherId, sourceBroker, brokerConfig,
       replicaMgr, metrics, time, quotaManager)
   }

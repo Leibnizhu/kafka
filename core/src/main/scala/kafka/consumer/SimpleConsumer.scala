@@ -30,6 +30,7 @@ import org.apache.kafka.common.utils.Utils._
 
 /**
  * A consumer of kafka messages
+  * 代表和服务端的网络连接
  */
 @threadsafe
 class SimpleConsumer(val host: String,
