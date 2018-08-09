@@ -1590,15 +1590,15 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
         // the user is manually assigning partitions and managing their own offsets).
         fetcher.resetOffsetsIfNeeded(partitions);
 
-        if (!subscriptions.hasAllFetchPositions(partitions)) {
+        if (!subscriptions.hasAllFetchPositions(partitions)) { //如果消费者第一次轮询,没有拿到所有的分区偏移量,则需要更新这些没拿到偏移量的分区
             // if we still don't have offsets for the given partitions, then we should either
             // seek to the last committed position or reset using the auto reset policy
 
             // first refresh commits for all assigned partitions
-            coordinator.refreshCommittedOffsetsIfNeeded();
+            coordinator.refreshCommittedOffsetsIfNeeded(); //对没获取到偏移量的分区,重新获取
 
             // then do any offset lookups in case some positions are not known
-            fetcher.updateFetchPositions(partitions);
+            fetcher.updateFetchPositions(partitions);//更新分区的拉取偏移量
         }
     }
 

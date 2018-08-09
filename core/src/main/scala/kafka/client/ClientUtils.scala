@@ -149,6 +149,7 @@ object ClientUtils extends Logging{
 
    /**
     * Creates a blocking channel to the offset manager of the given group
+     *消费者连接器建立到偏移量管理器(协调节点)的连接
     */
    def channelToOffsetManager(group: String, zkUtils: ZkUtils, socketTimeoutMs: Int = 3000, retryBackOffMs: Int = 1000) = {
      var queryChannel = channelToAnyBroker(zkUtils)
@@ -164,16 +165,16 @@ object ClientUtils extends Logging{
            if (!queryChannel.isConnected)
              queryChannel = channelToAnyBroker(zkUtils)
            debug("Querying %s:%d to locate offset manager for %s.".format(queryChannel.host, queryChannel.port, group))
-           queryChannel.send(GroupCoordinatorRequest(group))
+           queryChannel.send(GroupCoordinatorRequest(group)) //发送消费者的协调者请求
            val response = queryChannel.receive()
            val consumerMetadataResponse =  GroupCoordinatorResponse.readFrom(response.payload())
            debug("Consumer metadata response: " + consumerMetadataResponse.toString)
            if (consumerMetadataResponse.errorCode == Errors.NONE.code)
-             coordinatorOpt = consumerMetadataResponse.coordinatorOpt
+             coordinatorOpt = consumerMetadataResponse.coordinatorOpt //没有发生错的话获取消费组协调节点
            else {
              debug("Query to %s:%d to locate offset manager for %s failed - will retry in %d milliseconds."
                   .format(queryChannel.host, queryChannel.port, group, retryBackOffMs))
-             Thread.sleep(retryBackOffMs)
+             Thread.sleep(retryBackOffMs) //请求响应过程中发生错误的话,等待下一次获取
            }
          }
          catch {
@@ -184,12 +185,14 @@ object ClientUtils extends Logging{
        }
 
        val coordinator = coordinatorOpt.get
+       //如果协调者就是在queryChannel,直接使用之前的随机选择的通道
        if (coordinator.host == queryChannel.host && coordinator.port == queryChannel.port) {
          offsetManagerChannelOpt = Some(queryChannel)
        } else {
          val connectString = "%s:%d".format(coordinator.host, coordinator.port)
          var offsetManagerChannel: BlockingChannel = null
          try {
+           //否则重新建立连接
            debug("Connecting to offset manager %s.".format(connectString))
            offsetManagerChannel = new BlockingChannel(coordinator.host, coordinator.port,
                                                       BlockingChannel.UseDefaultBufferSize,
@@ -197,7 +200,7 @@ object ClientUtils extends Logging{
                                                       socketTimeoutMs)
            offsetManagerChannel.connect()
            offsetManagerChannelOpt = Some(offsetManagerChannel)
-           queryChannel.disconnect()
+           queryChannel.disconnect() //关闭旧的连接
          }
          catch {
            case _: IOException => // offsets manager may have moved

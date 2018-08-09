@@ -105,7 +105,7 @@ private[kafka] class ZookeeperConsumerConnector(val config: ConsumerConfig,
   //当消费组成员发生变化时,通过rebalanceEventTriggered触发再平衡
   private var loadBalancerListener: ZKRebalancerListener = null
 
-  private var offsetsChannel: BlockingChannel = null //和管理消费组的协调者通信
+  private var offsetsChannel: BlockingChannel = null //和管理消费组的协调者通信,一个阻塞通道,一个连接
   private val offsetsChannelLock = new Object
 
   private var wildcardTopicWatcher: ZookeeperTopicEventWatcher = null
@@ -209,7 +209,7 @@ private[kafka] class ZookeeperConsumerConnector(val config: ConsumerConfig,
     if (config.offsetsStorage == "kafka") {
       if (offsetsChannel == null || !offsetsChannel.isConnected)
         offsetsChannel = ClientUtils.channelToOffsetManager(config.groupId, zkUtils,
-          config.offsetsChannelSocketTimeoutMs, config.offsetsChannelBackoffMs)
+          config.offsetsChannelSocketTimeoutMs, config.offsetsChannelBackoffMs) //向任意节点发送GroupCoordinatorRequest请求获取消费组对应的协调节点,OffsetManager节点
 
       debug("Connected to offset manager %s:%d.".format(offsetsChannel.host, offsetsChannel.port))
     }
@@ -329,14 +329,15 @@ private[kafka] class ZookeeperConsumerConnector(val config: ConsumerConfig,
    */
   def commitOffsets { commitOffsets(true) }
 
+  //在消费者连接器中需要定时的提交偏移量
   def commitOffsets(isAutoCommit: Boolean) {
 
     val offsetsToCommit =
-      immutable.Map(topicRegistry.values.flatMap { partitionTopicInfos =>
-        partitionTopicInfos.values.map { info =>
+      immutable.Map(topicRegistry.values.flatMap { partitionTopicInfos => //消费者订阅多个主题
+        partitionTopicInfos.values.map { info => //每个主题给当前消费者可能有多个分区,按分区信息拆分
           TopicAndPartition(info.topic, info.partitionId) -> OffsetAndMetadata(info.getConsumeOffset())
         }
-      }.toSeq: _*)
+      }.toSeq: _*) //flat成序列再转成Map
 
     commitOffsets(offsetsToCommit, isAutoCommit)
 
@@ -350,21 +351,21 @@ private[kafka] class ZookeeperConsumerConnector(val config: ConsumerConfig,
       val committed = offsetsChannelLock synchronized {
         // committed when we receive either no error codes or only MetadataTooLarge errors
         if (offsetsToCommit.size > 0) {
-          if (config.offsetsStorage == "zookeeper") {
+          if (config.offsetsStorage == "zookeeper") { //选择使用zk存储偏移量
             offsetsToCommit.foreach { case (topicAndPartition, offsetAndMetadata) =>
-              commitOffsetToZooKeeper(topicAndPartition, offsetAndMetadata.offset)
+              commitOffsetToZooKeeper(topicAndPartition, offsetAndMetadata.offset) //真正提交到ZK,每个分区都写一次,不同分区的ZK Node不一样
             }
             true
-          } else {
+          } else { //使用Kafka内部主题存储偏移量
             val offsetCommitRequest = OffsetCommitRequest(config.groupId, offsetsToCommit, clientId = config.clientId)
-            ensureOffsetManagerConnected()
+            ensureOffsetManagerConnected() //确保客户端连接上偏移量管理器
             try {
               kafkaCommitMeter.mark(offsetsToCommit.size)
-              offsetsChannel.send(offsetCommitRequest)
+              offsetsChannel.send(offsetCommitRequest) //发送提交偏移量的请求
               val offsetCommitResponse = OffsetCommitResponse.readFrom(offsetsChannel.receive().payload())
               trace("Offset commit response: %s.".format(offsetCommitResponse))
 
-              val (commitFailed, retryableIfFailed, shouldRefreshCoordinator, errorCount) = {
+              val (commitFailed, retryableIfFailed, shouldRefreshCoordinator, errorCount) = { //处理提交偏移量的响应
                 offsetCommitResponse.commitStatus.foldLeft(false, false, false, 0) { case (folded, (topicPartition, errorCode)) =>
 
                   if (errorCode == Errors.NONE.code && config.dualCommitEnabled) {
@@ -424,6 +425,7 @@ private[kafka] class ZookeeperConsumerConnector(val config: ConsumerConfig,
     }
   }
 
+  //从zk读取指定分区的偏移量
   private def fetchOffsetFromZooKeeper(topicPartition: TopicAndPartition) = {
     val dirs = new ZKGroupTopicDirs(config.groupId, topicPartition.topic)
     val offsetString = zkUtils.readDataMaybeNull(dirs.consumerOffsetDir + "/" + topicPartition.partition)._1

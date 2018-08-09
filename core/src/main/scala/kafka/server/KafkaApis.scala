@@ -712,6 +712,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     }
   }
 
+  //获取指定片段文件在指定时间戳之前的偏移量
   private[server] def fetchOffsetsBefore(log: Log, timestamp: Long, maxNumOffsets: Int): Seq[Long] = {
     // Cache to avoid race conditions. `toBuffer` is faster than most alternatives and provides
     // constant time access while being safe to use with concurrent collections unlike `toArray`.

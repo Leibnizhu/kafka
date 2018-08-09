@@ -393,6 +393,7 @@ class GroupCoordinator(val brokerId: Int,
     }
   }
 
+  //服务端粗粒消费者客户端发送的提交偏移量请求
   def handleCommitOffsets(groupId: String,
                           memberId: String,
                           generationId: Int,
@@ -451,7 +452,7 @@ class GroupCoordinator(val brokerId: Int,
     }
 
     // store the offsets without holding the group lock
-    delayedOffsetStore.foreach(groupManager.store)
+    delayedOffsetStore.foreach(groupManager.store) //所有偏移量写入
   }
 
   def handleFetchOffsets(groupId: String,

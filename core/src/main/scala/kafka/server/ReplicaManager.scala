@@ -300,6 +300,7 @@ class ReplicaManager(val config: KafkaConfig,
   /**
    * Append messages to leader replicas of the partition, and wait for them to be replicated to other replicas;
    * the callback function will be triggered either when timeout or the required acks are satisfied
+    * 将消息写入到分区主副本,并等待复制到其他副本
    */
   def appendRecords(timeout: Long,
                     requiredAcks: Short,
@@ -361,7 +362,7 @@ class ReplicaManager(val config: KafkaConfig,
     localProduceResults.values.count(_.exception.isDefined) < entriesPerPartition.size
   }
 
-  private def isValidRequiredAcks(requiredAcks: Short): Boolean = {
+  private def isValidRequiredAcks(requiredAcks: Short): Boolean = {ad
     requiredAcks == -1 || requiredAcks == 1 || requiredAcks == 0
   }
 

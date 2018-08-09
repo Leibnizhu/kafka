@@ -55,9 +55,13 @@ object OffsetRequest {
   }
 }
 
+/**
+  * @param time 拉取的时间戳,第一次拉取为-2,拉取超出offset范围时设为-1
+  * @param maxNumOffsets 需要获取多少片段文件的基准偏移量,消费者获取最新偏移量一般只要一个就可以,所以一般为1
+  */
 case class PartitionOffsetRequestInfo(time: Long, maxNumOffsets: Int)
 
-case class OffsetRequest(requestInfo: Map[TopicAndPartition, PartitionOffsetRequestInfo],
+case class OffsetRequest(requestInfo: Map[TopicAndPartition, PartitionOffsetRequestInfo], //分区偏移量的请求信息
                          versionId: Short = OffsetRequest.CurrentVersion,
                          correlationId: Int = 0,
                          clientId: String = OffsetRequest.DefaultClientId,

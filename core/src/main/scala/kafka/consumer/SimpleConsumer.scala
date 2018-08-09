@@ -181,6 +181,7 @@ class SimpleConsumer(val host: String,
    * @param earliestOrLatest A value to indicate earliest or latest offset.
    * @param consumerId Id of the consumer which could be a consumer client, SimpleConsumerShell or a follower broker.
    * @return Requested offset.
+    * 发送偏移量请求,获取分区最近的偏移量
    */
   def earliestOrLatestOffset(topicAndPartition: TopicAndPartition, earliestOrLatest: Long, consumerId: Int): Long = {
     val request = OffsetRequest(requestInfo = Map(topicAndPartition -> PartitionOffsetRequestInfo(earliestOrLatest, 1)),

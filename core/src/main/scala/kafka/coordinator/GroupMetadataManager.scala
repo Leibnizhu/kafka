@@ -217,7 +217,7 @@ class GroupMetadataManager(val brokerId: Int,
       config.offsetCommitRequiredAcks,
       true, // allow appending to internal offset topic
       delayedStore.partitionRecords,
-      delayedStore.callback)
+      delayedStore.callback) //消息集写入到本地日志文件
   }
 
   /**
@@ -250,6 +250,7 @@ class GroupMetadataManager(val brokerId: Int,
         val entries = Map(offsetTopicPartition -> MemoryRecords.withRecords(timestampType, compressionType, records:_*))
 
         // set the callback function to insert offsets into cache after log append completed
+        // 日志写入完成后,将偏移量更新到缓存,这样如果再平衡之后其他消费者需要读取分区的偏移量,可以直接读取缓存,不需要从日志读取
         def putCacheCallback(responseStatus: Map[TopicPartition, PartitionResponse]) {
           // the append response should only contain the topics partition
           if (responseStatus.size != 1 || ! responseStatus.contains(offsetTopicPartition))
@@ -310,14 +311,14 @@ class GroupMetadataManager(val brokerId: Int,
           }
 
           // finally trigger the callback logic passed from the API layer
-          responseCallback(commitStatus)
+          responseCallback(commitStatus) //追加消息到日志文件成功, 调用回调方法
         }
 
         group synchronized {
           group.prepareOffsetCommit(offsetMetadata)
         }
 
-        Some(DelayedStore(entries, putCacheCallback))
+        Some(DelayedStore(entries, putCacheCallback)) //消息集合的回调
 
       case None =>
         val commitStatus = offsetMetadata.map { case (topicPartition, offsetAndMetadata) =>

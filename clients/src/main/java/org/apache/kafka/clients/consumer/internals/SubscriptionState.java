@@ -47,6 +47,7 @@ import java.util.regex.Pattern;
  * This class also maintains a cache of the latest commit position for each of the assigned
  * partitions. This is updated through {@link #committed(TopicPartition, OffsetAndMetadata)} and can be used
  * to set the initial fetch position (e.g. {@link Fetcher#resetOffset(TopicPartition)}.
+ * 消费者定于状态,提供了两种模式,订阅和分配
  */
 public class SubscriptionState {
     private static final String SUBSCRIPTION_EXCEPTION_MESSAGE =
@@ -69,7 +70,7 @@ public class SubscriptionState {
     private final Set<String> groupSubscription;
 
     /* the partitions that are currently assigned, note that the order of partition matters (see FetchBuilder for more details) */
-    private final PartitionStates<TopicPartitionState> assignment;
+    private final PartitionStates<TopicPartitionState> assignment; //存储消费者当前分配的分区及其状态
 
     /* do we need to request the latest committed offsets from the coordinator? */
     private boolean needsFetchCommittedOffsets;
@@ -176,6 +177,7 @@ public class SubscriptionState {
     /**
      * Change the assignment to the specified partitions returned from the coordinator,
      * note this is different from {@link #assignFromUser(Set)} which directly set the assignment from user inputs
+     * 消费者分配到分区后调用该方法,将分区及其状态加入到assignment
      */
     public void assignFromSubscribed(Collection<TopicPartition> assignments) {
         if (!this.partitionsAutoAssigned())
@@ -435,8 +437,9 @@ public class SubscriptionState {
             this.resetStrategy = null;
         }
 
+        //重置拉取偏移量
         private void awaitReset(OffsetResetStrategy strategy) {
-            this.resetStrategy = strategy;
+            this.resetStrategy = strategy; //设置重置策略
             this.position = null;
         }
 
@@ -448,6 +451,7 @@ public class SubscriptionState {
             return position != null;
         }
 
+        //第一次从ZK或协调节点拉取转台
         private void seek(long offset) {
             this.position = offset;
             this.resetStrategy = null;
@@ -456,9 +460,10 @@ public class SubscriptionState {
         private void position(long offset) {
             if (!hasValidPosition())
                 throw new IllegalStateException("Cannot set a new position without a valid current position");
-            this.position = offset;
+            this.position = offset; //拉取线程:拉取到消息之后,更新拉取偏移量
         }
 
+        //消费端实时提交任务调用,更新消费偏移量
         private void committed(OffsetAndMetadata offset) {
             this.committed = offset;
         }

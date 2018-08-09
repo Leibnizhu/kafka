@@ -28,7 +28,7 @@ import kafka.common.{KafkaException, MessageSizeTooLargeException}
 /**
  * An iterator that blocks until a value can be read from the supplied queue.
  * The iterator takes a shutdownCommand object which can be added to the queue to trigger a shutdown
- *
+ * KafkaStream的iterator()方法实际返回的迭代器类
  */
 class ConsumerIterator[K, V](private val channel: BlockingQueue[FetchedDataChunk],
                              consumerTimeoutMs: Int,
@@ -39,26 +39,26 @@ class ConsumerIterator[K, V](private val channel: BlockingQueue[FetchedDataChunk
 
   private val current: AtomicReference[Iterator[MessageAndOffset]] = new AtomicReference(null)
   private var currentTopicInfo: PartitionTopicInfo = null
-  private var consumedOffset: Long = -1L
+  private var consumedOffset: Long = -1L //消费者已经消费完成的偏移量
   private val consumerTopicStats = ConsumerTopicStatsRegistry.getConsumerTopicStat(clientId)
 
   override def next(): MessageAndMetadata[K, V] = {
-    val item = super.next()
+    val item = super.next() //父类方法,会调用到子类(即当前类)的makeNext()方法
     if(consumedOffset < 0)
       throw new KafkaException("Offset returned by the message set is invalid %d".format(consumedOffset))
-    currentTopicInfo.resetConsumeOffset(consumedOffset)
+    currentTopicInfo.resetConsumeOffset(consumedOffset) //更新消费偏移量
     val topic = currentTopicInfo.topic
     trace("Setting %s consumed offset to %d".format(topic, consumedOffset))
     consumerTopicStats.getConsumerTopicStats(topic).messageRate.mark()
     consumerTopicStats.getConsumerAllTopicStats().messageRate.mark()
-    item
+    item //返回最新一条消息给调用者
   }
 
   protected def makeNext(): MessageAndMetadata[K, V] = {
     var currentDataChunk: FetchedDataChunk = null
     // if we don't have an iterator, get one
     var localCurrent = current.get()
-    if(localCurrent == null || !localCurrent.hasNext) {
+    if(localCurrent == null || !localCurrent.hasNext) { //当前消息集消费完,或第一次进来,需要更新更新迭代器
       if (consumerTimeoutMs < 0)
         currentDataChunk = channel.take
       else {
@@ -69,21 +69,21 @@ class ConsumerIterator[K, V](private val channel: BlockingQueue[FetchedDataChunk
           throw new ConsumerTimeoutException
         }
       }
-      if(currentDataChunk eq ZookeeperConsumerConnector.shutdownCommand) {
+      if(currentDataChunk eq ZookeeperConsumerConnector.shutdownCommand) { //收到关闭的命令
         debug("Received the shutdown command")
         return allDone
-      } else {
+      } else { //正常情况
         currentTopicInfo = currentDataChunk.topicInfo
-        val cdcFetchOffset = currentDataChunk.fetchOffset
+        val cdcFetchOffset = currentDataChunk.fetchOffset //至少从数据块的拉取偏移量开始
         val ctiConsumeOffset = currentTopicInfo.getConsumeOffset
         if (ctiConsumeOffset < cdcFetchOffset) {
           error("consumed offset: %d doesn't match fetch offset: %d for %s;\n Consumer may lose data"
             .format(ctiConsumeOffset, cdcFetchOffset, currentTopicInfo))
-          currentTopicInfo.resetConsumeOffset(cdcFetchOffset)
+          currentTopicInfo.resetConsumeOffset(cdcFetchOffset) //消费偏移量小于拉取偏移量,错误,消费者可能丢失数据了,需要重置偏移量
         }
         localCurrent = currentDataChunk.messages.iterator
 
-        current.set(localCurrent)
+        current.set(localCurrent) //更新同步的消息集迭代器本地变量
       }
       // if we just updated the current chunk and it is empty that means the fetch size is too small!
       if(currentDataChunk.messages.validBytes == 0)
@@ -91,8 +91,9 @@ class ConsumerIterator[K, V](private val channel: BlockingQueue[FetchedDataChunk
                                                "%s partition %d at fetch offset %d. Increase the fetch size, or decrease the maximum message size the broker will allow."
                                                .format(currentDataChunk.topicInfo.topic, currentDataChunk.topicInfo.partitionId, currentDataChunk.fetchOffset))
     }
-    var item = localCurrent.next()
+    var item = localCurrent.next() //消息项,包含消息内容和消息偏移量
     // reject the messages that have already been consumed
+    // 跳过已消费的消息,
     while (item.offset < currentTopicInfo.getConsumeOffset && localCurrent.hasNext) {
       item = localCurrent.next()
     }

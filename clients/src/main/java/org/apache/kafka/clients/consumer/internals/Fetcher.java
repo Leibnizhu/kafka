@@ -239,14 +239,14 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
         for (TopicPartition tp : partitions) {
             if (!subscriptions.isAssigned(tp) || subscriptions.hasValidPosition(tp))
                 continue;
-
-            if (subscriptions.isOffsetResetNeeded(tp)) {
+            //重置拉取偏移量到已经提交过的位置
+            if (subscriptions.isOffsetResetNeeded(tp)) { //需要重置
                 resetOffset(tp);
-            } else if (subscriptions.committed(tp) == null) {
+            } else if (subscriptions.committed(tp) == null) { //已提交的偏移量为空
                 // there's no committed position, so we need to reset with the default strategy
                 subscriptions.needOffsetReset(tp);
                 resetOffset(tp);
-            } else {
+            } else { //分区状态中已提交的偏移量不为空,则直接用它作为拉取偏移量
                 long committed = subscriptions.committed(tp).offset();
                 log.debug("Resetting offset for partition {} to the committed offset {}", tp, committed);
                 subscriptions.seek(tp, committed);
